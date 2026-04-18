@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌳 Парк-Гид</title>
+  <style>body{font-family:system-ui;padding:20px;text-align:center}
+  #status{margin:20px 0;color:#444;min-height:1.5em}
+  button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
+  button:disabled{background:#93c5fd}</style>
+</head>
+<body>
+  <h1>🌳 Аудиогид парка</h1>
+  <button id="start">🎧 Начать маршрут</button>
+  <p id="status">Нажмите кнопку для старта...</p>
+  <audio id="player" controls style="display:none"></audio>
+
+<script>
+const API_BASE = "https://ВАШ-NGROK-URL.ngrok-free.app"; // ← замените!
+const POI = [
+  {id: "entrance", lat: 55.751244, lon: 37.618423, radius: 40, prompt: "Расскажи историческим тоном."},
+  {id: "pond",     lat: 55.752100, lon: 37.619500, radius: 40, prompt: "Добавь немного юмора."}
+];
+let triggered = new Set();
+let isPlaying = false;
+
+document.getElementById('start').onclick = async () => {
+  if (!navigator.geolocation) return alert("GPS не поддерживается");
+  await navigator.wakeLock?.request('screen').catch(()=>{});
+  document.getElementById('status').textContent = "📡 Поиск спутников...";
+  
+  navigator.geolocation.watchPosition(pos => {
+    const {latitude, longitude} = pos.coords;
+    document.getElementById('status').textContent = `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    
+    POI.forEach(p => {
+      const dist = haversine(latitude, longitude, p.lat, p.lon);
+      if (dist < p.radius && !triggered.has(p.id)) {
+        triggered.add(p.id);
+        fetchAndPlay(p);
+      }
+    });
+  }, err => {
+    document.getElementById('status').textContent = `⚠️ GPS: ${err.message}`;
+  }, {enableHighAccuracy: true, maximumAge: 2000, timeout: 5000});
+};
+
+async function fetchAndPlay(poi) {
+  const status = document.getElementById('status');
+  const btn = document.getElementById('start');
+  status.textContent = `🎙️ Генерация рассказа для "${poi.id}"... (3-6 сек)`;
+  btn.disabled = true;
+  isPlaying = true;
+
+  try {
+    const res = await fetch(`${API_BASE}/generate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({poi_id: poi.id, lat: 0, lon: 0, prompt: poi.prompt})
+    });
+    if (!res.ok) throw new Error("Server error");
+    const data = await res.json();
+    
+    const player = document.getElementById('player');
+    player.src = `${API_BASE}${data.url}`;
+    player.style.display = "block";
+    await player.play();
+    status.textContent = `✅ Воспроизведение: ${poi.id}`;
+    
+    player.onended = () => {
+      isPlaying = false;
+      btn.disabled = false;
+      status.textContent = "📍 Ожидание следующей точки...";
+    };
+  } catch(e) {
+    status.textContent = `❌ Ошибка: ${e.message}`;
+    btn.disabled = false;
+  }
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+</script>
+</body>
+</html>
