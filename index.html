@@ -16,10 +16,24 @@
   <audio id="player" controls style="display:none"></audio>
 
 <script>
+
 const API_BASE = "https://api.viberos.fun"; //
+
 const POI = [
-  {id: "entrance", lat: 55.751244, lon: 37.618423, radius: 40, prompt: "Расскажи историческим тоном."},
-  {id: "pond",     lat: 55.752100, lon: 37.619500, radius: 40, prompt: "Добавь немного юмора."}
+  {
+    id: "главный_вход_кованые_ворота_1890_года", 
+    lat: 55.757646, 
+    lon: 37.794904, 
+    radius: 40, 
+    prompt: "Расскажи историческим тоном, упомяни архитектора."
+  },
+  {
+    id: "лебяжий_пруд_12_пар_лебедей_кормление_спецкормом", 
+    lat: 55.752100, 
+    lon: 37.619500, 
+    radius: 40, 
+    prompt: "Добавь немного юмора, предупреди о правилах кормления."
+  }
 ];
 let triggered = new Set();
 let isPlaying = false;
