@@ -1,4 +1,21 @@
-<script>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌳 Парк-Гид</title>
+  <style>body{font-family:system-ui;padding:20px;text-align:center}
+  #status{margin:20px 0;color:#444;min-height:1.5em}
+  button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
+  button:disabled{background:#93c5fd}</style>
+</head>
+<body>
+  <h1>🌳 Аудиогид парка</h1>
+  <button id="start">🎧 Начать маршрут</button>
+  <p id="status">Нажмите кнопку для старта...</p>
+  <audio id="player" controls style="display:none"></audio>
+
+  <script>
 const API_BASE = "https://api.viberos.fun";
 
 const POI = [
@@ -127,3 +144,5 @@ function haversine(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 </script>
+</body>
+</html>
