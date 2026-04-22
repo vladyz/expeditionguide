@@ -10,10 +10,33 @@
   button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
   button:disabled{background:#93c5fd}
   .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  #helpBtn{position:fixed;top:14px;right:14px;width:42px;height:42px;padding:0;border-radius:50%;
+  font-size:22px;line-height:1;background:#2563eb;color:#fff;z-index:30}
+  #helpOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;
+  align-items:center;justify-content:center;padding:16px}
+  #helpCard{background:#fff;max-width:560px;width:100%;border-radius:12px;padding:18px;text-align:left;
+  box-shadow:0 10px 30px rgba(0,0,0,.2)}
+  #helpCard h3{margin:0 0 10px 0}
+  #helpCard ul{margin:0 0 14px 18px;padding:0}
+  #helpCard li{margin:7px 0}
   #voiceConsole{display:none;background:#f8f9fa;padding:10px;border-radius:6px;min-height:90px;border:1px solid #ddd;
   font-family:monospace;max-height:220px;overflow-y:auto;text-align:left;max-width:700px;margin:12px auto 0}</style>
 </head>
 <body>
+  <button id="helpBtn" aria-label="Показать инструкцию">?</button>
+  <div id="helpOverlay">
+    <div id="helpCard">
+      <h3>Как пользоваться гидом</h3>
+      <ul>
+        <li>Нажмите `Начать маршрут` и дайте доступ к геолокации.</li>
+        <li>Когда вы входите в радиус точки, гид сам генерирует и включает аудио.</li>
+        <li>Кнопка `Спросить` запускает голосовой вопрос: скажите фразу, и получите ответ голосом.</li>
+        <li>Строка генерации показывает, когда ответ готовится — это нормально занимает несколько секунд.</li>
+        <li>Нажмите `Закончить маршрут`, чтобы остановить GPS, очистить статусы и начать заново позже.</li>
+      </ul>
+      <button id="helpClose">Закрыть</button>
+    </div>
+  </div>
   <h1>🌳 Аудиогид парка</h1>
   <div class="controls">
     <button id="start">🎧 Начать маршрут</button>
@@ -167,6 +190,20 @@ async function stopRouteTracking() {
 
 document.getElementById('ask').onclick = () => {
   startVoiceQuestion();
+};
+
+document.getElementById('helpBtn').onclick = () => {
+  document.getElementById('helpOverlay').style.display = "flex";
+};
+
+document.getElementById('helpClose').onclick = () => {
+  document.getElementById('helpOverlay').style.display = "none";
+};
+
+document.getElementById('helpOverlay').onclick = (e) => {
+  if (e.target.id === "helpOverlay") {
+    document.getElementById('helpOverlay').style.display = "none";
+  }
 };
 
 function onPosition(pos) {
