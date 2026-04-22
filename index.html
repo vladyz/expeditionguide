@@ -7,12 +7,19 @@
   <style>body{font-family:system-ui;padding:20px;text-align:center}
   #status{margin:20px 0;color:#444;min-height:1.5em}
   button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
-  button:disabled{background:#93c5fd}</style>
+  button:disabled{background:#93c5fd}
+  .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  #voiceConsole{display:none;background:#f8f9fa;padding:10px;border-radius:6px;min-height:90px;border:1px solid #ddd;
+  font-family:monospace;max-height:220px;overflow-y:auto;text-align:left;max-width:700px;margin:12px auto 0}</style>
 </head>
 <body>
   <h1>🌳 Аудиогид парка</h1>
-  <button id="start">🎧 Начать маршрут</button>
+  <div class="controls">
+    <button id="start">🎧 Начать маршрут</button>
+    <button id="ask">🎤 Спросить</button>
+  </div>
   <p id="status">Нажмите кнопку для старта...</p>
+  <div id="voiceConsole">Распознанные фразы:</div>
   <div id="debugPanel" style="display:none;margin:20px auto;max-width:700px;text-align:left;border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#f8fafc"></div>
   <audio id="player" controls style="display:none"></audio>
 
@@ -29,6 +36,12 @@ const POI = [
 let triggered = new Set();
 let watchId = null;
 const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListeningQuestion = false;
+let questionTranscript = "";
+let noSpeechRetries = 0;
+const MAX_NO_SPEECH_RETRIES = 2;
 
 if (DEBUG_MODE) {
   setupDebugPanel();
@@ -59,6 +72,10 @@ document.getElementById('start').onclick = async () => {
     maximumAge: 2000,
     timeout: 10000
   });
+};
+
+document.getElementById('ask').onclick = () => {
+  startVoiceQuestion();
 };
 
 function onPosition(pos) {
@@ -137,6 +154,109 @@ async function fetchAndPlay(poi) {
     status.textContent = `❌ Ошибка: ${e.message}`;
     btn.disabled = false;
     // ВАЖНО: не выбрасываем ошибку дальше, чтобы не сломать watchPosition
+  }
+}
+
+function startVoiceQuestion() {
+  const status = document.getElementById('status');
+  const askBtn = document.getElementById('ask');
+  const voiceConsole = document.getElementById('voiceConsole');
+
+  if (!SpeechRecognition) {
+    status.textContent = "❌ Браузер не поддерживает голосовой ввод";
+    return;
+  }
+
+  if (!recognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'ru-RU';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+
+    recognition.onresult = (event) => {
+      const currentIndex = event.resultIndex;
+      const transcript = event.results[currentIndex][0].transcript.trim();
+      questionTranscript = transcript;
+      console.log("🗣️ Вопрос распознан:", transcript);
+      logVoicePhrase(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error("❌ Ошибка распознавания:", event.error);
+
+      if (event.error === "no-speech" && isListeningQuestion) {
+        if (noSpeechRetries < MAX_NO_SPEECH_RETRIES) {
+          noSpeechRetries += 1;
+          status.textContent = `🎤 Не расслышал, повторите вопрос (${noSpeechRetries}/${MAX_NO_SPEECH_RETRIES + 1})...`;
+          setTimeout(() => {
+            if (!isListeningQuestion) return;
+            try {
+              recognition.start();
+            } catch (_) {
+              // если start в этот момент недоступен, onend завершит сессию
+            }
+          }, 250);
+          return;
+        }
+
+        status.textContent = "⚠️ Речь не распознана. Нажмите «Спросить» и говорите чуть громче.";
+        askBtn.disabled = false;
+        isListeningQuestion = false;
+        return;
+      }
+
+      status.textContent = `❌ Ошибка распознавания: ${event.error}`;
+      askBtn.disabled = false;
+      isListeningQuestion = false;
+    };
+
+    recognition.onend = async () => {
+      if (!isListeningQuestion) return;
+      isListeningQuestion = false;
+      askBtn.disabled = false;
+
+      if (!questionTranscript) {
+        status.textContent = "⚠️ Не удалось распознать вопрос";
+        return;
+      }
+
+      const text = questionTranscript;
+      questionTranscript = "";
+      status.textContent = `❓ Вопрос: "${text}"`;
+
+      const questionPoi = {
+        id: `вопрос_${Date.now()}`,
+        prompt: `Ответь на вопрос пользователя кратко и по делу: ${text}`
+      };
+      await fetchAndPlay(questionPoi);
+    };
+  }
+
+  questionTranscript = "";
+  noSpeechRetries = 0;
+  isListeningQuestion = true;
+  askBtn.disabled = true;
+  voiceConsole.style.display = "block";
+  status.textContent = "🎤 Слушаю вопрос...";
+
+  try {
+    recognition.start();
+  } catch (e) {
+    askBtn.disabled = false;
+    isListeningQuestion = false;
+    status.textContent = `❌ Не удалось запустить голосовой ввод: ${e.message}`;
+  }
+}
+
+function logVoicePhrase(text) {
+  const voiceConsole = document.getElementById('voiceConsole');
+  const entry = document.createElement('div');
+  entry.textContent = `🗣️ ${text} (${new Date().toLocaleTimeString()})`;
+  voiceConsole.prepend(entry);
+
+  while (voiceConsole.children.length > 40) {
+    voiceConsole.removeChild(voiceConsole.lastChild);
   }
 }
 
