@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🌳 Парк-Гид</title>
   <style>body{font-family:system-ui;padding:20px;text-align:center}
-  #status{margin:20px 0;color:#444;min-height:1.5em}
+  #status{margin:20px 0 6px;color:#444;min-height:1.5em}
+  #generationStatus{margin:0 0 14px;color:#7c3aed;min-height:1.4em;font-weight:600}
   button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
   button:disabled{background:#93c5fd}
   .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
@@ -19,6 +20,7 @@
     <button id="ask">🎤 Спросить</button>
   </div>
   <p id="status">Нажмите кнопку для старта...</p>
+  <p id="generationStatus"></p>
   <div id="voiceConsole"></div>
   <div id="debugPanel" style="display:none;margin:20px auto;max-width:700px;text-align:left;border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#f8fafc"></div>
   <audio id="player" controls style="display:none"></audio>
@@ -152,13 +154,19 @@ function onError(err) {
 
 async function fetchAndPlay(poi, options = {}) {
   const status = document.getElementById('status');
+  const generationStatus = document.getElementById('generationStatus');
   const btn = document.getElementById('start');
   const player = document.getElementById('player');
   const isQuestion = options.isQuestion === true;
+  const separateGenerationStatus = options.separateGenerationStatus !== false;
   const loadingStatus = options.loadingStatus || `🎙️ Генерация: "${poi.id}"...`;
   const playingStatus = options.playingStatus || `🔊 Играет: "${poi.id}"`;
   
-  status.textContent = loadingStatus;
+  if (separateGenerationStatus) {
+    generationStatus.textContent = loadingStatus;
+  } else {
+    status.textContent = loadingStatus;
+  }
   btn.disabled = true; // Блокируем кнопку, пока играет
   
   try {
@@ -182,6 +190,7 @@ async function fetchAndPlay(poi, options = {}) {
     if (!isQuestion) {
       logConsoleEntry(`📍 ${poi.id}`);
     }
+    generationStatus.textContent = "";
     
     status.textContent = playingStatus;
     
@@ -189,6 +198,7 @@ async function fetchAndPlay(poi, options = {}) {
     player.onended = () => {
       btn.disabled = false;
       status.textContent = "📍 Ждём следующую точку...";
+      generationStatus.textContent = "";
       console.log(`✅ Завершено: ${poi.id}`);
     };
     
@@ -197,11 +207,13 @@ async function fetchAndPlay(poi, options = {}) {
       console.error("Audio error:", e);
       btn.disabled = false;
       status.textContent = "⚠️ Ошибка аудио";
+      generationStatus.textContent = "";
     };
     
   } catch (e) {
     console.error("fetchAndPlay error:", e);
     status.textContent = `❌ Ошибка: ${e.message}`;
+    generationStatus.textContent = "";
     btn.disabled = false;
     // ВАЖНО: не выбрасываем ошибку дальше, чтобы не сломать watchPosition
   }
