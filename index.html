@@ -19,7 +19,7 @@
     <button id="ask">🎤 Спросить</button>
   </div>
   <p id="status">Нажмите кнопку для старта...</p>
-  <div id="voiceConsole">Распознанные фразы:</div>
+  <div id="voiceConsole"></div>
   <div id="debugPanel" style="display:none;margin:20px auto;max-width:700px;text-align:left;border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#f8fafc"></div>
   <audio id="player" controls style="display:none"></audio>
 
@@ -238,6 +238,7 @@ function startVoiceQuestion() {
   isListeningQuestion = true;
   askBtn.disabled = true;
   voiceConsole.style.display = "block";
+  voiceConsole.innerHTML = "";
   status.textContent = "🎤 Слушаю вопрос...";
 
   try {
