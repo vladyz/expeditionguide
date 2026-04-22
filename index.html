@@ -64,6 +64,8 @@ const POI_TERLY = [
 let poiInside = new Set();
 let lastPoiTriggerMs = new Map();
 let watchId = null;
+let wakeLockSentinel = null;
+let routeActive = false;
 const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
 const SELF_MODE = new URLSearchParams(window.location.search).get("self") === "1";
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -80,16 +82,31 @@ if (DEBUG_MODE) {
 }
 
 document.getElementById('start').onclick = async () => {
+  if (routeActive) {
+    await stopRouteTracking();
+    return;
+  }
+
+  await startRouteTracking();
+};
+
+async function startRouteTracking() {
   if (!navigator.geolocation) return alert("GPS не поддерживается");
   
   // Запрос блокировки экрана (опционально)
-  await navigator.wakeLock?.request('screen').catch(()=>{});
+  wakeLockSentinel = await navigator.wakeLock?.request('screen').catch(() => null);
   
   const btn = document.getElementById('start');
   const status = document.getElementById('status');
+  const generationStatus = document.getElementById('generationStatus');
+  const player = document.getElementById('player');
   
-  btn.disabled = true;
+  routeActive = true;
+  btn.textContent = "🛑 Закончить маршрут";
   status.textContent = "📡 Поиск спутников...";
+  generationStatus.textContent = "";
+  player.onended = null;
+  player.onerror = null;
   
   // Если уже отслеживаем — останови перед новым запуском
   if (watchId !== null) {
@@ -105,13 +122,52 @@ document.getElementById('start').onclick = async () => {
     maximumAge: 2000,
     timeout: 10000
   });
-};
+}
+
+async function stopRouteTracking() {
+  const btn = document.getElementById('start');
+  const status = document.getElementById('status');
+  const generationStatus = document.getElementById('generationStatus');
+  const player = document.getElementById('player');
+
+  routeActive = false;
+  btn.textContent = "🎧 Начать маршрут";
+
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+
+  poiInside.clear();
+  lastPoiTriggerMs.clear();
+  generationStatus.textContent = "";
+
+  player.onended = null;
+  player.onerror = null;
+  player.pause();
+  player.currentTime = 0;
+  player.removeAttribute("src");
+  player.load();
+
+  if (wakeLockSentinel) {
+    try {
+      await wakeLockSentinel.release();
+    } catch (_) {
+      // ignore release errors
+    }
+    wakeLockSentinel = null;
+  }
+
+  status.textContent = "⏹️ Маршрут завершён";
+}
 
 document.getElementById('ask').onclick = () => {
   startVoiceQuestion();
 };
 
 function onPosition(pos) {
+  if (!routeActive) return;
+
   const {latitude, longitude} = pos.coords;
   const status = document.getElementById('status');
   
@@ -155,7 +211,6 @@ function onError(err) {
 async function fetchAndPlay(poi, options = {}) {
   const status = document.getElementById('status');
   const generationStatus = document.getElementById('generationStatus');
-  const btn = document.getElementById('start');
   const player = document.getElementById('player');
   const isQuestion = options.isQuestion === true;
   const separateGenerationStatus = options.separateGenerationStatus !== false;
@@ -167,8 +222,6 @@ async function fetchAndPlay(poi, options = {}) {
   } else {
     status.textContent = loadingStatus;
   }
-  btn.disabled = true; // Блокируем кнопку, пока играет
-  
   try {
     const res = await fetch(`${API_BASE}/generate`, {
       method: 'POST',
@@ -196,7 +249,6 @@ async function fetchAndPlay(poi, options = {}) {
     
     // Когда аудио закончится — разблокируем кнопку, НО не останавливаем слежение!
     player.onended = () => {
-      btn.disabled = false;
       status.textContent = "📍 Ждём следующую точку...";
       generationStatus.textContent = "";
       console.log(`✅ Завершено: ${poi.id}`);
@@ -205,7 +257,6 @@ async function fetchAndPlay(poi, options = {}) {
     // Обработка ошибок воспроизведения
     player.onerror = (e) => {
       console.error("Audio error:", e);
-      btn.disabled = false;
       status.textContent = "⚠️ Ошибка аудио";
       generationStatus.textContent = "";
     };
@@ -214,7 +265,6 @@ async function fetchAndPlay(poi, options = {}) {
     console.error("fetchAndPlay error:", e);
     status.textContent = `❌ Ошибка: ${e.message}`;
     generationStatus.textContent = "";
-    btn.disabled = false;
     // ВАЖНО: не выбрасываем ошибку дальше, чтобы не сломать watchPosition
   }
 }
@@ -369,12 +419,7 @@ function setupDebugPanel() {
     }
 
     if (target.id === "debugStopGps") {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-      }
-      const btn = document.getElementById('start');
-      btn.disabled = false;
+      await stopRouteTracking();
       document.getElementById('status').textContent = "⏹️ GPS остановлен";
       return;
     }
