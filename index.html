@@ -51,12 +51,16 @@ const POI_VDNH = [
 
 const POI_TERLY = [
   {id: "вход_в_терлецкий_парк", lat: 55.76103683294057, lon: 37.80077662032731, radius: 40, prompt: "Расскажи про вход в Терлецкий парк: арка из стали, дубы и асфальтовая дорожка. Подача разговорная и с легким юмором."},
-  {id: "Магазинчик в доме", lat: 55.76110957047546, lon: 37.803265218164434, radius: 40, prompt: "Расскажи про точку у «Красного и Белого»: почему место живое и популярное у местных. Добавь мягкий юмор и дружелюбный тон."},
-  {id: "Великие клумбы", lat: 55.76102774073918, lon: 37.80399240584412, radius: 40, prompt: "Расскажи про клумбы и атмосферу точки, где часто гуляют собаки с хозяевами. Тон теплый, с легким уместным юмором."},
-  {id: "Волшебная дорога", lat: 55.761182307874655, lon: 37.80404896488587, radius: 40, prompt: "Расскажи про любимую дорожку Влада к храму и личную связь с этим местом. Подача эмоциональная, но с легким юмором."}
+  {id: "магазинчик_в_доме", lat: 55.76110957047546, lon: 37.803265218164434, radius: 40, prompt: "Расскажи про «магазинчик в доме» — тот самый «Красное и Белое», куда заходят утолить жажду и поднять настроение. Добавь мягкий и добрый юмор."},
+  {id: "великие_клумбы", lat: 55.76102774073918, lon: 37.80399240584412, radius: 40, prompt: "Расскажи про «великие клумбы»: загадочные цветы, атмосфера «ничего не понятно, но очень интересно», прогулки собак с хозяевами и местный колорит. Тон теплый и с легким юмором."},
+  {id: "волшебная_дорога", lat: 55.761182307874655, lon: 37.80404896488587, radius: 40, prompt: "Расскажи про «волшебную дорогу» — любимую дорожку Влада к храму, с личной ностальгией и эмоциональной связью с местом. Добавь аккуратный добрый юмор."},
+  {id: "кафе_новогиреевское", lat: 55.757941939284606, lon: 37.79532233614496, radius: 40, prompt: "Расскажи про кафе «Новогиреевское»: место, где вершатся судьбы, съедается пицца и выпивается кофе. Подача живая, с легким уместным юмором."},
+  {id: "перекресток_терлецкий", lat: 55.75738780124116, lon: 37.795914649028035, radius: 40, prompt: "Расскажи про местный перекресток с бесконечным потоком машин и людей, подчеркни его бойкий ритм. Добавь немного доброго юмора."},
+  {id: "мусорный_контейнер", lat: 55.757212000778324, lon: 37.794631875758526, radius: 40, prompt: "Расскажи про «мусорный контейнер» как про ироничную городскую достопримечательность: живописные остатки мебели и бытовых историй. Юмор легкий, без грубости."}
 ];
 
-let triggered = new Set();
+let poiInside = new Set();
+let lastPoiTriggerMs = new Map();
 let watchId = null;
 const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
 const SELF_MODE = new URLSearchParams(window.location.search).get("self") === "1";
@@ -66,6 +70,7 @@ let isListeningQuestion = false;
 let questionTranscript = "";
 let noSpeechRetries = 0;
 const MAX_NO_SPEECH_RETRIES = 2;
+const REENTRY_COOLDOWN_MS = 45000;
 const POI = SELF_MODE ? POI_TERLY : POI_VDNH;
 
 if (DEBUG_MODE) {
@@ -89,8 +94,9 @@ document.getElementById('start').onclick = async () => {
     navigator.geolocation.clearWatch(watchId);
   }
   
-  // Сброс триггеров для повторного прохождения (опционально)
-  triggered.clear();
+  // Сброс состояния входа/повтора для нового запуска
+  poiInside.clear();
+  lastPoiTriggerMs.clear();
   
   watchId = navigator.geolocation.watchPosition(onPosition, onError, {
     enableHighAccuracy: true,
@@ -111,16 +117,29 @@ function onPosition(pos) {
   
   // Проверяем все POI на каждой позиции
   POI.forEach(poi => {
-    // Пропускаем уже сработавшие точки
-    if (triggered.has(poi.id)) return;
-    
     const dist = haversine(latitude, longitude, poi.lat, poi.lon);
-    
-    // Если вошли в радиус — запускаем
-    if (dist < poi.radius) {
+    const isInside = dist < poi.radius;
+    const wasInside = poiInside.has(poi.id);
+
+    // Триггерим только при входе в радиус (outside -> inside)
+    if (isInside && !wasInside) {
+      const now = Date.now();
+      const lastTs = lastPoiTriggerMs.get(poi.id) || 0;
+      if (now - lastTs < REENTRY_COOLDOWN_MS) {
+        poiInside.add(poi.id);
+        return;
+      }
+
       console.log(`🎯 Триггер: ${poi.id} (${Math.round(dist)} м)`);
-      triggered.add(poi.id); // Блокируем повторный триггер для этой точки
+      lastPoiTriggerMs.set(poi.id, now);
+      poiInside.add(poi.id);
       fetchAndPlay(poi); // Не ждём завершения — продолжаем следить
+      return;
+    }
+
+    // Если вышли из радиуса — разрешаем сработать снова при следующем входе
+    if (!isInside && wasInside) {
+      poiInside.delete(poi.id);
     }
   });
 }
@@ -131,12 +150,14 @@ function onError(err) {
   // Не останавливаем watchPosition — ошибка может быть временной
 }
 
-async function fetchAndPlay(poi) {
+async function fetchAndPlay(poi, options = {}) {
   const status = document.getElementById('status');
   const btn = document.getElementById('start');
   const player = document.getElementById('player');
+  const loadingStatus = options.loadingStatus || `🎙️ Генерация: "${poi.id}"...`;
+  const playingStatus = options.playingStatus || `🔊 Играет: "${poi.id}"`;
   
-  status.textContent = `🎙️ Генерация: "${poi.id}"...`;
+  status.textContent = loadingStatus;
   btn.disabled = true; // Блокируем кнопку, пока играет
   
   try {
@@ -158,7 +179,7 @@ async function fetchAndPlay(poi) {
     player.style.display = "block";
     await player.play();
     
-    status.textContent = `🔊 Играет: "${poi.id}"`;
+    status.textContent = playingStatus;
     
     // Когда аудио закончится — разблокируем кнопку, НО не останавливаем слежение!
     player.onended = () => {
@@ -254,7 +275,10 @@ function startVoiceQuestion() {
         id: `вопрос_${Date.now()}`,
         prompt: `Ответь на вопрос пользователя кратко, по делу и с легким уместным юмором: ${text}`
       };
-      await fetchAndPlay(questionPoi);
+      await fetchAndPlay(questionPoi, {
+        loadingStatus: "🤔 Генерируется ответ...",
+        playingStatus: "🔊 Играет ответ на вопрос"
+      });
     };
   }
 
@@ -316,8 +340,9 @@ function setupDebugPanel() {
     if (!(target instanceof HTMLElement)) return;
 
     if (target.id === "debugReset") {
-      triggered.clear();
-      document.getElementById('status').textContent = "🧹 Debug: triggered очищен";
+      poiInside.clear();
+      lastPoiTriggerMs.clear();
+      document.getElementById('status').textContent = "🧹 Debug: состояние точек очищено";
       return;
     }
 

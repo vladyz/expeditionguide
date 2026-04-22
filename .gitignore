@@ -1,4 +1,4 @@
 *.py
 .env
-*.md
+OVERVIEW.md
 cache/
