@@ -29,7 +29,7 @@ document.getElementById('start').onclick = async () => {
   }
   
   // Сброс триггеров для повторного прохождения (опционально)
-  // triggered.clear(); // Раскомментируй, если хочешь проходить точки повторно
+  triggered.clear();
   
   watchId = navigator.geolocation.watchPosition(onPosition, onError, {
     enableHighAccuracy: true,
