@@ -1,118 +1,129 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🌳 Парк-Гид</title>
-  <style>body{font-family:system-ui;padding:20px;text-align:center}
-  #status{margin:20px 0;color:#444;min-height:1.5em}
-  button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
-  button:disabled{background:#93c5fd}</style>
-</head>
-<body>
-  <h1>🌳 Аудиогид парка</h1>
-  <button id="start">🎧 Начать маршрут</button>
-  <p id="status">Нажмите кнопку для старта...</p>
-  <audio id="player" controls style="display:none"></audio>
-
 <script>
-
-const API_BASE = "https://api.viberos.fun"; //
+const API_BASE = "https://api.viberos.fun";
 
 const POI = [
-  {
-    id: "главный_вход_кованые_ворота_1890_года", 
-    lat: 55.757646, 
-    lon: 37.794904, 
-    radius: 40, 
-    prompt: "Расскажи историческим тоном, упомяни архитектора."
-  },
-  {
-    id: "лебяжий_пруд_12_пар_лебедей_кормление_спецкормом", 
-    lat: 55.752100, 
-    lon: 37.619500, 
-    radius: 40, 
-    prompt: "Добавь немного юмора, предупреди о правилах кормления."
-  },
-  {
-    id: "Живописная беседка для выступлений", 
-    lat: 55.763563, 
-    lon: 37.805777, 
-    radius: 20, 
-    prompt: "Добавь немного юмора, предупреди о правилах вымтуплений"
-  },
-  {
-    id: "Перекресток тропинок", 
-    lat: 55.763972, 
-    lon: 37.805458, 
-    radius: 20, 
-    prompt: "Добавь немного юмора, предупреди о правилах ходьбы по тропинкам"
-  }
+  {id: "главный_вход_кованые_ворота_1890_года", lat: 55.757646, lon: 37.794904, radius: 40, prompt: "Расскажи историческим тоном, упомяни архитектора."},
+  {id: "лебяжий_пруд_12_пар_лебедей_кормление_спецкормом", lat: 55.752100, lon: 37.619500, radius: 40, prompt: "Добавь немного юмора, предупреди о правилах кормления."},
+  {id: "Живописная беседка для выступлений", lat: 55.763563, lon: 37.805777, radius: 20, prompt: "Добавь немного юмора, предупреди о правилах выступлений"},
+  {id: "Перекресток тропинок", lat: 55.763972, lon: 37.805458, radius: 20, prompt: "Добавь немного юмора, предупреди о правилах ходьбы по тропинкам"}
 ];
+
 let triggered = new Set();
-let isPlaying = false;
+let watchId = null;
 
 document.getElementById('start').onclick = async () => {
   if (!navigator.geolocation) return alert("GPS не поддерживается");
-  await navigator.wakeLock?.request('screen').catch(()=>{});
-  document.getElementById('status').textContent = "📡 Поиск спутников...";
   
-  navigator.geolocation.watchPosition(pos => {
-    const {latitude, longitude} = pos.coords;
-    document.getElementById('status').textContent = `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-    
-    POI.forEach(p => {
-      const dist = haversine(latitude, longitude, p.lat, p.lon);
-      if (dist < p.radius && !triggered.has(p.id)) {
-        triggered.add(p.id);
-        fetchAndPlay(p);
-      }
-    });
-  }, err => {
-    document.getElementById('status').textContent = `⚠️ GPS: ${err.message}`;
-  }, {enableHighAccuracy: true, maximumAge: 2000, timeout: 5000});
+  // Запрос блокировки экрана (опционально)
+  await navigator.wakeLock?.request('screen').catch(()=>{});
+  
+  const btn = document.getElementById('start');
+  const status = document.getElementById('status');
+  
+  btn.disabled = true;
+  status.textContent = "📡 Поиск спутников...";
+  
+  // Если уже отслеживаем — останови перед новым запуском
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+  }
+  
+  // Сброс триггеров для повторного прохождения (опционально)
+  // triggered.clear(); // Раскомментируй, если хочешь проходить точки повторно
+  
+  watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 10000
+  });
 };
+
+function onPosition(pos) {
+  const {latitude, longitude} = pos.coords;
+  const status = document.getElementById('status');
+  
+  status.textContent = `📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+  
+  // Проверяем все POI на каждой позиции
+  POI.forEach(poi => {
+    // Пропускаем уже сработавшие точки
+    if (triggered.has(poi.id)) return;
+    
+    const dist = haversine(latitude, longitude, poi.lat, poi.lon);
+    
+    // Если вошли в радиус — запускаем
+    if (dist < poi.radius) {
+      console.log(`🎯 Триггер: ${poi.id} (${Math.round(dist)} м)`);
+      triggered.add(poi.id); // Блокируем повторный триггер для этой точки
+      fetchAndPlay(poi); // Не ждём завершения — продолжаем следить
+    }
+  });
+}
+
+function onError(err) {
+  console.warn("GPS error:", err);
+  document.getElementById('status').textContent = `⚠️ GPS: ${err.message}`;
+  // Не останавливаем watchPosition — ошибка может быть временной
+}
 
 async function fetchAndPlay(poi) {
   const status = document.getElementById('status');
   const btn = document.getElementById('start');
-  status.textContent = `🎙️ Генерация рассказа для "${poi.id}"... (3-6 сек)`;
-  btn.disabled = true;
-  isPlaying = true;
-
+  const player = document.getElementById('player');
+  
+  status.textContent = `🎙️ Генерация: "${poi.id}"...`;
+  btn.disabled = true; // Блокируем кнопку, пока играет
+  
   try {
     const res = await fetch(`${API_BASE}/generate`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({poi_id: poi.id, lat: 0, lon: 0, prompt: poi.prompt})
+      body: JSON.stringify({poi_id: poi.id, context: poi.prompt})
     });
-    if (!res.ok) throw new Error("Server error");
+    
+    if (!res.ok) {
+      const errText = await res.text().catch(() => res.statusText);
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    
     const data = await res.json();
     
-    const player = document.getElementById('player');
+    // Воспроизведение
     player.src = `${API_BASE}${data.url}`;
     player.style.display = "block";
     await player.play();
-    status.textContent = `✅ Воспроизведение: ${poi.id}`;
     
+    status.textContent = `🔊 Играет: "${poi.id}"`;
+    
+    // Когда аудио закончится — разблокируем кнопку, НО не останавливаем слежение!
     player.onended = () => {
-      isPlaying = false;
       btn.disabled = false;
-      status.textContent = "📍 Ожидание следующей точки...";
+      status.textContent = "📍 Ждём следующую точку...";
+      console.log(`✅ Завершено: ${poi.id}`);
     };
-  } catch(e) {
+    
+    // Обработка ошибок воспроизведения
+    player.onerror = (e) => {
+      console.error("Audio error:", e);
+      btn.disabled = false;
+      status.textContent = "⚠️ Ошибка аудио";
+    };
+    
+  } catch (e) {
+    console.error("fetchAndPlay error:", e);
     status.textContent = `❌ Ошибка: ${e.message}`;
     btn.disabled = false;
+    // ВАЖНО: не выбрасываем ошибку дальше, чтобы не сломать watchPosition
   }
 }
 
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371000;
-  const dLat = (lat2-lat1)*Math.PI/180;
-  const dLon = (lon2-lon1)*Math.PI/180;
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-  return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + 
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * 
+            Math.sin(dLon/2)**2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 </script>
-</body>
-</html>
