@@ -55,7 +55,7 @@ const POI_TERLY = [
   {id: "великие_клумбы", lat: 55.76102774073918, lon: 37.80399240584412, radius: 40, prompt: "Расскажи про «великие клумбы»: загадочные цветы, атмосфера «ничего не понятно, но очень интересно», прогулки собак с хозяевами и местный колорит. Тон теплый и с легким юмором."},
   {id: "волшебная_дорога", lat: 55.761182307874655, lon: 37.80404896488587, radius: 40, prompt: "Расскажи про «волшебную дорогу» — любимую дорожку Влада к храму, с личной ностальгией и эмоциональной связью с местом. Добавь аккуратный добрый юмор."},
   {id: "кафе_новогиреевское", lat: 55.757941939284606, lon: 37.79532233614496, radius: 40, prompt: "Расскажи про кафе «Новогиреевское»: место, где вершатся судьбы, съедается пицца и выпивается кофе. Подача живая, с легким уместным юмором."},
-  {id: "перекресток_терлецкий", lat: 55.75738780124116, lon: 37.795914649028035, radius: 40, prompt: "Расскажи про местный перекресток с бесконечным потоком машин и людей, подчеркни его бойкий ритм. Добавь немного доброго юмора."},
+  {id: "перекресток", lat: 55.75738780124116, lon: 37.795914649028035, radius: 40, prompt: "Расскажи про местный перекресток с бесконечным потоком машин и людей, подчеркни его бойкий ритм. Добавь немного доброго юмора."},
   {id: "мусорный_контейнер", lat: 55.757212000778324, lon: 37.794631875758526, radius: 40, prompt: "Расскажи про «мусорный контейнер» как про ироничную городскую достопримечательность: живописные остатки мебели и бытовых историй. Юмор легкий, без грубости."}
 ];
 
@@ -154,6 +154,7 @@ async function fetchAndPlay(poi, options = {}) {
   const status = document.getElementById('status');
   const btn = document.getElementById('start');
   const player = document.getElementById('player');
+  const isQuestion = options.isQuestion === true;
   const loadingStatus = options.loadingStatus || `🎙️ Генерация: "${poi.id}"...`;
   const playingStatus = options.playingStatus || `🔊 Играет: "${poi.id}"`;
   
@@ -178,6 +179,9 @@ async function fetchAndPlay(poi, options = {}) {
     player.src = `${API_BASE}${data.url}`;
     player.style.display = "block";
     await player.play();
+    if (!isQuestion) {
+      logConsoleEntry(`📍 ${poi.id}`);
+    }
     
     status.textContent = playingStatus;
     
@@ -276,6 +280,7 @@ function startVoiceQuestion() {
         prompt: `Ответь на вопрос пользователя кратко, по делу и с легким уместным юмором: ${text}`
       };
       await fetchAndPlay(questionPoi, {
+        isQuestion: true,
         loadingStatus: "🤔 Генерируется ответ...",
         playingStatus: "🔊 Играет ответ на вопрос"
       });
@@ -300,9 +305,14 @@ function startVoiceQuestion() {
 }
 
 function logVoicePhrase(text) {
+  logConsoleEntry(`🗣️ ${text}`);
+}
+
+function logConsoleEntry(text) {
   const voiceConsole = document.getElementById('voiceConsole');
+  voiceConsole.style.display = "block";
   const entry = document.createElement('div');
-  entry.textContent = `🗣️ ${text} (${new Date().toLocaleTimeString()})`;
+  entry.textContent = `${text} (${new Date().toLocaleTimeString()})`;
   voiceConsole.prepend(entry);
 
   while (voiceConsole.children.length > 40) {
