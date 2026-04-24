@@ -36,7 +36,7 @@
         <li>Строка генерации показывает, когда ответ готовится — это нормально занимает несколько секунд.</li>
         <li>Нажмите `Закончить маршрут`, чтобы остановить GPS, очистить статусы и начать заново позже.</li>
       </ul>
-      <h4 style="margin:0 0 8px 0">Точки ВДНХ</h4>
+      <h4 id="helpPoiTitle" style="margin:0 0 8px 0">Точки маршрута</h4>
       <ul id="helpVdnhPoints"></ul>
       <button id="helpClose">Закрыть</button>
     </div>
@@ -114,8 +114,6 @@ const POI = VLAS_MODE ? POI_VLAS : (SELF_MODE ? POI_TERLY : POI_VDNH);
 if (DEBUG_MODE) {
   setupDebugPanel();
 }
-
-renderHelpPoints();
 
 document.getElementById('start').onclick = async () => {
   if (routeActive) {
@@ -206,6 +204,7 @@ document.getElementById('ask').onclick = () => {
 };
 
 document.getElementById('helpBtn').onclick = () => {
+  renderHelpPoints();
   document.getElementById('helpOverlay').style.display = "flex";
 };
 
@@ -221,8 +220,17 @@ document.getElementById('helpOverlay').onclick = (e) => {
 
 function renderHelpPoints() {
   const list = document.getElementById('helpVdnhPoints');
+  const title = document.getElementById('helpPoiTitle');
   if (!list) return;
-  list.innerHTML = POI.map(p => `<li>${escapeHtml(p.id)}</li>`).join("");
+  const points = POI;
+  if (title) {
+    title.textContent = VLAS_MODE
+      ? "Точки маршрута (VLAS)"
+      : SELF_MODE
+        ? "Точки маршрута (Терлецкий)"
+        : "Точки маршрута (ВДНХ)";
+  }
+  list.innerHTML = points.map(p => `<li>${escapeHtml(p.id)}</li>`).join("");
 }
 
 function onPosition(pos) {
