@@ -9,6 +9,7 @@
   #generationStatus{margin:0 0 14px;color:#7c3aed;min-height:1.4em;font-weight:600}
   button{padding:14px 28px;font-size:18px;border:none;border-radius:8px;background:#2563eb;color:#fff}
   button:disabled{background:#93c5fd}
+  #clearCache{background:#64748b}
   .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
   #helpBtn{position:fixed;top:14px;right:14px;width:42px;height:42px;padding:0;border-radius:50%;
   font-size:22px;line-height:1;background:#2563eb;color:#fff;z-index:30}
@@ -38,6 +39,7 @@
         <li>Строка генерации показывает, когда ответ готовится — это нормально занимает несколько секунд.</li>
         <li>Нажмите `Закончить маршрут`, чтобы остановить GPS, очистить статусы и начать заново позже.</li>
         <li>Переключатель «Мат»: если включён, к каждому запросу к гиду добавляется строка «используй мат»; если выключен — она не добавляется.</li>
+        <li>«Очистить кэш» удаляет на сервере все сохранённые WAV в папке кэша; следующие озвучки снова пройдут через LLM и TTS.</li>
       </ul>
       <h4 id="helpPoiTitle" style="margin:0 0 8px 0">Точки маршрута</h4>
       <ul id="helpVdnhPoints"></ul>
@@ -48,6 +50,7 @@
   <div class="controls">
     <button id="start">🎧 Начать маршрут</button>
     <button id="ask">🎤 Спросить</button>
+    <button type="button" id="clearCache">🗑️ Очистить кэш</button>
   </div>
   <div class="matRow">
     <input type="checkbox" id="matToggle">
@@ -168,6 +171,10 @@ document.getElementById('start').onclick = async () => {
   }
 
   await startRouteTracking();
+};
+
+document.getElementById('clearCache').onclick = () => {
+  clearServerCache();
 };
 
 async function startRouteTracking() {
@@ -322,6 +329,39 @@ function onError(err) {
   console.warn("GPS error:", err);
   document.getElementById('status').textContent = `⚠️ GPS: ${err.message}`;
   // Не останавливаем watchPosition — ошибка может быть временной
+}
+
+function formatCacheClearError(data, fallback) {
+  const d = data && data.detail;
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && d.message) return d.message;
+  if (d != null) return JSON.stringify(d);
+  return fallback;
+}
+
+async function clearServerCache() {
+  if (!confirm("Удалить все файлы в кэше аудио на сервере? Следующие озвучки снова пройдут через генерацию.")) return;
+  const status = document.getElementById("status");
+  const generationStatus = document.getElementById("generationStatus");
+  const btn = document.getElementById("clearCache");
+  btn.disabled = true;
+  generationStatus.textContent = "";
+  try {
+    const res = await fetch(`${API_BASE}/cache/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(formatCacheClearError(data, res.statusText));
+    }
+    status.textContent = `✅ Кэш очищен (удалено файлов: ${data.removed ?? 0})`;
+  } catch (e) {
+    status.textContent = `❌ Ошибка очистки кэша: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function fetchAndPlay(poi, options = {}) {
