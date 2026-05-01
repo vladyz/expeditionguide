@@ -94,14 +94,29 @@ const POI_VLAS = [
   {id: "мужской_бизнес_клуб", lat: 55.60392062804994, lon: 37.73983889103323, radius: 10, prompt: "Расскажи про «Мужской бизнес клуб»: место силы настоящих мужчин, где можно напитаться энергией на год вперед. Добавь пошлых шуток и мата"}
 ];
 
+const POI_EXP = [
+  {id: "шатер_со_сценой", lat: 56.1363124352812, lon: 38.01786720033071, radius: 10, prompt: "Расскажи про «Шатер со сценой»: место, где можно выступить. Если вы артист, фокусник или вам просто есть о чем рассказать - добро пожаловать сюда. Добавь легкий пошлый юмор и мат."},
+  {id: "шатер_с_мангалом", lat: 56.13637234343628, lon: 38.01860749001884, radius: 10, prompt: "Расскажи про «Шатер с мангалом»: потрясающий шатер с мангалом в виде паровоза. Ждет гостей, которые любят задушевные беседы и шашлыки. Добавь легкий пошлый юмор и мат."},
+  {id: "чум", lat: 56.13619112095962, lon: 38.018553845838525, radius: 10, prompt: "Расскажи про «Чум»: просто чум для тех, кто любит быть ближе к природе. Пение птиц, единение с окружающей средой и невероятные закаты. Добавь легкий пошлый юмор и мат."},
+  {id: "подвесной_мост", lat: 56.13643524689187, lon: 38.01884084220304, radius: 10, prompt: "Расскажи про «Подвесной мост»: мост с цепями. Выглядит устрашающе, не любит трусов, весело качается от каждого шага по нему.Добавь легкий пошлым юмор и мат."},
+  {id: "ресторан", lat: 56.13613570562396, lon: 38.0201309847392, radius: 10, prompt: "Расскажи про «Ресторан»: место, где вас накормят от пуза. Осторожнее с перееданием, здесь вкусно. Добавь легкий пошлым юмор и мат."},
+  {id: "поляна", lat: 56.13640079975337, lon: 38.01947116132147, radius: 10, prompt: "Расскажи про «Поляна»: живописная поляна. Ждет, когда ее кто-то накроет. Хотите быть здесь первым? Добавь легкий пошлым юмор и мат."},
+  {id: "танцпол", lat: 56.13612522161744, lon: 38.01813542123206, radius: 10, prompt: "Расскажи про «Танцпол»: площадка для танцев под музыку. Ну или для спокойного летнего отдыха, это кому как нравится Добавь легкий пошлым юмор и мат."},
+  {id: "дорога", lat: 56.13597095669296, lon: 38.01901250357993, radius: 10, prompt: "Расскажи про «Дорога»: грунтовая дорога. Куда же она тебя приведет? Никто не знает. Сделай первый шаг навстречу приключениям. Добавь легкий пошлым юмор и мат."},
+  {id: "река_талица", lat: 56.136176143783054, lon: 38.01919757600187, radius: 10, prompt: "Расскажи про «Реку Талицу»: живописная река, протекающая по территории парка. Пить из нее не стоит, а вот помочить в ней ноги - вполне хорошая идея. Добавь легкий пошлым юмор и мат."}
+];
+
 let poiInside = new Set();
 let lastPoiTriggerMs = new Map();
 let watchId = null;
 let wakeLockSentinel = null;
 let routeActive = false;
 const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
-const SELF_MODE = new URLSearchParams(window.location.search).get("self") === "1";
-const VLAS_MODE = new URLSearchParams(window.location.search).get("vlas") === "1";
+const queryParams = new URLSearchParams(window.location.search);
+const isModeEnabled = (name) => queryParams.get(name) === "1" || queryParams.get(name.toLowerCase()) === "1";
+const SELF_MODE = isModeEnabled("SELF");
+const VLAS_MODE = isModeEnabled("VLAS");
+const EXP_MODE = isModeEnabled("EXP");
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isListeningQuestion = false;
@@ -109,7 +124,7 @@ let questionTranscript = "";
 let noSpeechRetries = 0;
 const MAX_NO_SPEECH_RETRIES = 2;
 const REENTRY_COOLDOWN_MS = 45000;
-const POI = VLAS_MODE ? POI_VLAS : (SELF_MODE ? POI_TERLY : POI_VDNH);
+const POI = EXP_MODE ? POI_EXP : (VLAS_MODE ? POI_VLAS : (SELF_MODE ? POI_TERLY : POI_VDNH));
 
 if (DEBUG_MODE) {
   setupDebugPanel();
@@ -224,11 +239,13 @@ function renderHelpPoints() {
   if (!list) return;
   const points = POI;
   if (title) {
-    title.textContent = VLAS_MODE
-      ? "Точки маршрута (VLAS)"
-      : SELF_MODE
-        ? "Точки маршрута (Терлецкий)"
-        : "Точки маршрута (ВДНХ)";
+    title.textContent = EXP_MODE
+      ? "Точки маршрута (EXP)"
+      : VLAS_MODE
+        ? "Точки маршрута (VLAS)"
+        : SELF_MODE
+          ? "Точки маршрута (Терлецкий)"
+          : "Точки маршрута (ВДНХ)";
   }
   list.innerHTML = points.map(p => `<li>${escapeHtml(p.id)}</li>`).join("");
 }
