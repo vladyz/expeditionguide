@@ -24,6 +24,10 @@
   #helpVdnhPoints li{margin:4px 0;font-family:monospace;font-size:13px}
   #voiceConsole{display:none;background:#f8f9fa;padding:10px;border-radius:6px;min-height:90px;border:1px solid #ddd;
   font-family:monospace;max-height:220px;overflow-y:auto;text-align:left;max-width:700px;margin:12px auto 0}
+  #scriptPanel{display:none;max-width:720px;margin:16px auto;text-align:left;padding:16px 18px;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  #scriptPanel .scriptLabel{font-size:13px;color:#64748b;margin-bottom:8px;font-weight:600}
+  #scriptText{font-size:17px;line-height:1.55;color:#1e293b;white-space:pre-wrap;word-break:break-word}
   .matRow{display:flex;align-items:center;justify-content:center;gap:8px;margin:12px 0;font-size:16px;user-select:none}
   .matRow input{width:18px;height:18px;accent-color:#2563eb}</style>
 </head>
@@ -61,6 +65,10 @@
   <div id="voiceConsole"></div>
   <div id="debugPanel" style="display:none;margin:20px auto;max-width:700px;text-align:left;border:1px solid #e5e7eb;border-radius:10px;padding:14px;background:#f8fafc"></div>
   <audio id="player" controls style="display:none"></audio>
+  <div id="scriptPanel" aria-live="polite">
+    <div class="scriptLabel">Текст озвучки</div>
+    <div id="scriptText"></div>
+  </div>
 
   <script>
 const API_BASE = "https://api.viberos.fun";
@@ -250,6 +258,12 @@ async function stopRouteTracking() {
   generationStatus.textContent = "";
   voiceConsole.innerHTML = "";
   voiceConsole.style.display = "none";
+  const scriptPanel = document.getElementById("scriptPanel");
+  const scriptTextEl = document.getElementById("scriptText");
+  if (scriptPanel && scriptTextEl) {
+    scriptPanel.style.display = "none";
+    scriptTextEl.textContent = "";
+  }
 }
 
 document.getElementById('ask').onclick = () => {
@@ -391,7 +405,19 @@ async function fetchAndPlay(poi, options = {}) {
     }
     
     const data = await res.json();
-    
+    const scriptPanel = document.getElementById("scriptPanel");
+    const scriptTextEl = document.getElementById("scriptText");
+    if (scriptPanel && scriptTextEl) {
+      const t = data.text;
+      if (typeof t === "string" && t.trim()) {
+        scriptTextEl.textContent = t;
+        scriptPanel.style.display = "block";
+      } else {
+        scriptTextEl.textContent = "";
+        scriptPanel.style.display = "none";
+      }
+    }
+
     // Воспроизведение
     player.src = `${API_BASE}${data.url}`;
     player.style.display = "block";
