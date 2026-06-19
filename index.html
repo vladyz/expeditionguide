@@ -507,21 +507,59 @@ function resolveApiBase() {
   if (override) return override.replace(/\/$/, "");
 
   const { protocol, hostname, port } = window.location;
+
+  // Страница уже с production-домена — тот же origin (Cloudflare → park-server)
+  if (hostname === "app.viberos.fun" || hostname.endsWith(".viberos.fun")) {
+    return window.location.origin;
+  }
+
+  // Локальная разработка: backend всегда на :8000, даже если HTML открыт через Live Server (:5500 и т.п.)
   if (protocol === "http:" || protocol === "https:") {
     if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return `${protocol}//${hostname}${port ? `:${port}` : ""}`;
+      if (port === "8000") return window.location.origin;
+      return "http://127.0.0.1:8000";
     }
   }
+
+  if (protocol === "file:") {
+    return "http://127.0.0.1:8000";
+  }
+
   return "https://app.viberos.fun";
 }
 
+function formatFetchError(err, url) {
+  const msg = err && err.message ? err.message : String(err);
+  if (msg === "Failed to fetch" || (err instanceof TypeError && msg.includes("fetch"))) {
+    if (window.location.protocol === "file:") {
+      return `Нет связи с ${url}. Откройте http://127.0.0.1:8000 и запустите: python server.py`;
+    }
+    if (API_BASE.includes("127.0.0.1") || API_BASE.includes("localhost")) {
+      return `Нет связи с ${url}. Запустите backend: python server.py (порт 8000)`;
+    }
+    return `Нет связи с ${url}. Проверьте интернет и что park-server на VPS запущен`;
+  }
+  return msg;
+}
+
 const API_BASE = resolveApiBase();
+console.info("API_BASE:", API_BASE);
 
 if (window.location.protocol === "file:") {
   document.addEventListener("DOMContentLoaded", () => {
     const status = document.getElementById("status");
     if (status) {
-      status.textContent = "⚠️ Откройте через http://127.0.0.1:8000 (python server.py), а не файлом с диска";
+      status.textContent = "Откройте http://127.0.0.1:8000 (python server.py) — файл с диска не работает";
+    }
+  });
+} else if (
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") &&
+  window.location.port !== "8000"
+) {
+  document.addEventListener("DOMContentLoaded", () => {
+    const status = document.getElementById("status");
+    if (status && !status.textContent) {
+      status.textContent = `API: ${API_BASE} (страница не с :8000 — запросы идут на backend)`;
     }
   });
 }
@@ -834,7 +872,7 @@ async function clearServerCache() {
     }
     status.textContent = `Кэш очищен (удалено файлов: ${data.removed ?? 0})`;
   } catch (e) {
-    status.textContent = `Ошибка очистки кэша: ${e.message}`;
+    status.textContent = `Ошибка очистки кэша: ${formatFetchError(e, `${API_BASE}/cache/clear`)}`;
   } finally {
     btn.disabled = false;
   }
@@ -907,7 +945,7 @@ async function fetchAndPlay(poi, options = {}) {
     
   } catch (e) {
     console.error("fetchAndPlay error:", e);
-    status.textContent = `Ошибка: ${e.message}`;
+    status.textContent = `Ошибка: ${formatFetchError(e, `${API_BASE}/generate`)}`;
     generationStatus.textContent = "";
     // ВАЖНО: не выбрасываем ошибку дальше, чтобы не сломать watchPosition
   }
@@ -1157,10 +1195,7 @@ async function stopVoiceQuestionAndUpload() {
     };
   } catch (e) {
     console.error("voice upload error:", e);
-    const hint = window.location.protocol === "file:"
-      ? " Откройте страницу через http://127.0.0.1:8000 после запуска python server.py"
-      : "";
-    status.textContent = `Ошибка: ${e.message}${hint}`;
+    status.textContent = `Ошибка: ${formatFetchError(e, `${API_BASE}/api/v1/audio/upload`)}`;
     generationStatus.textContent = "";
   } finally {
     askBtn.disabled = false;
