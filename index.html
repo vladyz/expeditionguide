@@ -525,7 +525,55 @@ function resolveApiBase() {
     return "http://127.0.0.1:8000";
   }
 
+  // GitHub Pages и прочие static-хостинги — backend на VPS
+  if (hostname.endsWith(".github.io") || hostname.endsWith(".github.dev")) {
+    return "https://app.viberos.fun";
+  }
+
   return "https://app.viberos.fun";
+}
+
+let playerBlobUrl = null;
+
+function revokePlayerBlobUrl() {
+  if (playerBlobUrl) {
+    URL.revokeObjectURL(playerBlobUrl);
+    playerBlobUrl = null;
+  }
+}
+
+function resolveAudioUrl(pathOrUrl) {
+  if (!pathOrUrl) return "";
+  return pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
+}
+
+async function loadAudioIntoPlayer(player, pathOrUrl) {
+  const url = resolveAudioUrl(pathOrUrl);
+  revokePlayerBlobUrl();
+  const res = await fetch(url);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`Аудио HTTP ${res.status}: ${errText}`);
+  }
+  const blob = await res.blob();
+  if (!blob.size) throw new Error("Пустой аудиофайл");
+  playerBlobUrl = URL.createObjectURL(blob);
+  player.src = playerBlobUrl;
+  player.style.display = "block";
+  await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      player.onloadeddata = null;
+      player.onerror = null;
+    };
+    player.onloadeddata = () => {
+      cleanup();
+      resolve();
+    };
+    player.onerror = () => {
+      cleanup();
+      reject(new Error("Не удалось декодировать аудио"));
+    };
+  });
 }
 
 function formatFetchError(err, url) {
@@ -549,7 +597,17 @@ if (window.location.protocol === "file:") {
   document.addEventListener("DOMContentLoaded", () => {
     const status = document.getElementById("status");
     if (status) {
-      status.textContent = "Откройте http://127.0.0.1:8000 (python server.py) — файл с диска не работает";
+      status.textContent = `Локально: нужен python server.py (${API_BASE})`;
+    }
+  });
+} else if (
+  window.location.hostname.endsWith(".github.io") ||
+  window.location.hostname.endsWith(".github.dev")
+) {
+  document.addEventListener("DOMContentLoaded", () => {
+    const status = document.getElementById("status");
+    if (status && !status.textContent) {
+      status.textContent = `Backend: ${API_BASE}`;
     }
   });
 } else if (
@@ -918,9 +976,7 @@ async function fetchAndPlay(poi, options = {}) {
       }
     }
 
-    // Воспроизведение
-    player.src = `${API_BASE}${data.url}`;
-    player.style.display = "block";
+    await loadAudioIntoPlayer(player, data.url);
     await player.play();
     if (!isQuestion) {
       logConsoleEntry(poi.id);
@@ -1154,8 +1210,7 @@ async function stopVoiceQuestionAndUpload() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
-      throw new Error(detail || res.statusText);
+      throw new Error(formatApiError(data, res.statusText));
     }
 
     const textIn = data.text_in || "";
@@ -1180,9 +1235,8 @@ async function stopVoiceQuestionAndUpload() {
     const audioPath = data.url || data.audio_url || data.relative_url;
     if (!audioPath) throw new Error("В ответе нет url/audio_url");
 
-    const audioSrc = audioPath.startsWith("http") ? audioPath : `${API_BASE}${audioPath}`;
-    player.src = audioSrc;
-    player.style.display = "block";
+    generationStatus.textContent = "Загрузка ответа…";
+    await loadAudioIntoPlayer(player, audioPath);
     generationStatus.textContent = "";
     status.textContent = textIn ? `«${textIn}»` : "Играет ответ";
     await player.play();
@@ -1195,7 +1249,7 @@ async function stopVoiceQuestionAndUpload() {
     };
   } catch (e) {
     console.error("voice upload error:", e);
-    status.textContent = `Ошибка: ${formatFetchError(e, `${API_BASE}/api/v1/audio/upload`)}`;
+    status.textContent = `Ошибка: ${formatThrownError(formatFetchError(e, `${API_BASE}/api/v1/audio/upload`))}`;
     generationStatus.textContent = "";
   } finally {
     askBtn.disabled = false;
