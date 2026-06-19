@@ -2,3 +2,8 @@
 .env
 OVERVIEW.md
 cache/
+example/
+__pycache__/
+deploy/
+*.xlsx
+ARCHITECTURE_OVERVIEW.md

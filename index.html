@@ -39,7 +39,7 @@
       <ul>
         <li>Нажмите `Начать маршрут` и дайте доступ к геолокации.</li>
         <li>Когда вы входите в радиус точки, гид сам генерирует и включает аудио.</li>
-        <li>Кнопка `Спросить` запускает голосовой вопрос: скажите фразу, и получите ответ голосом.</li>
+        <li>Кнопка `Спросить`: нажмите, говорите вопрос, нажмите снова — аудио уйдёт на сервер, распознавание и ответ голосом на стороне LLM.</li>
         <li>Строка генерации показывает, когда ответ готовится — это нормально занимает несколько секунд.</li>
         <li>Нажмите `Закончить маршрут`, чтобы остановить GPS, очистить статусы и начать заново позже.</li>
         <li>Переключатель «Мат»: если включён, к каждому запросу к гиду добавляется строка «используй мат»; если выключен — она не добавляется.</li>
@@ -71,7 +71,30 @@
   </div>
 
   <script>
-const API_BASE = "https://app.viberos.fun";
+function resolveApiBase() {
+  const params = new URLSearchParams(window.location.search);
+  const override = params.get("api");
+  if (override) return override.replace(/\/$/, "");
+
+  const { protocol, hostname, port } = window.location;
+  if (protocol === "http:" || protocol === "https:") {
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${hostname}${port ? `:${port}` : ""}`;
+    }
+  }
+  return "https://app.viberos.fun";
+}
+
+const API_BASE = resolveApiBase();
+
+if (window.location.protocol === "file:") {
+  document.addEventListener("DOMContentLoaded", () => {
+    const status = document.getElementById("status");
+    if (status) {
+      status.textContent = "⚠️ Откройте через http://127.0.0.1:8000 (python server.py), а не файлом с диска";
+    }
+  });
+}
 
 const POI_VDNH = [
   {id: "арка_главного_входа_вднх", lat: 55.825833, lon: 37.638056, radius: 45, prompt: "Расскажи про Арку Главного входа ВДНХ: 1954 год, стиль сталинского ампира, шесть пар колонн и скульптуру «Тракторист и колхозница» на высоте 32 метра. Тон живой и с легким пошлым юмором"},
@@ -135,12 +158,9 @@ const isModeEnabled = (name) => queryParams.get(name) === "1" || queryParams.get
 const SELF_MODE = isModeEnabled("SELF");
 const VLAS_MODE = isModeEnabled("VLAS");
 const EXP_MODE = isModeEnabled("EXP");
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
-let isListeningQuestion = false;
-let questionTranscript = "";
-let noSpeechRetries = 0;
-const MAX_NO_SPEECH_RETRIES = 2;
+const TARGET_SAMPLE_RATE = 16000;
+let voiceRecorder = null;
+let isRecordingQuestion = false;
 const REENTRY_COOLDOWN_MS = 45000;
 const POI = EXP_MODE ? POI_EXP : (VLAS_MODE ? POI_VLAS : (SELF_MODE ? POI_TERLY : POI_VDNH));
 
@@ -232,6 +252,18 @@ async function stopRouteTracking() {
   if (watchId !== null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
+  }
+
+  if (isRecordingQuestion && voiceRecorder) {
+    isRecordingQuestion = false;
+    const rec = voiceRecorder;
+    voiceRecorder = null;
+    await rec.stop();
+    const askBtn = document.getElementById("ask");
+    if (askBtn) {
+      askBtn.textContent = "🎤 Спросить";
+      askBtn.disabled = false;
+    }
   }
 
   poiInside.clear();
@@ -452,99 +484,257 @@ async function fetchAndPlay(poi, options = {}) {
 }
 
 function startVoiceQuestion() {
-  const status = document.getElementById('status');
-  const askBtn = document.getElementById('ask');
-  const voiceConsole = document.getElementById('voiceConsole');
+  if (isRecordingQuestion) {
+    stopVoiceQuestionAndUpload();
+    return;
+  }
+  beginVoiceRecording();
+}
 
-  if (!SpeechRecognition) {
-    status.textContent = "❌ Браузер не поддерживает голосовой ввод";
+function resampleFloat32(input, inputRate, outputRate) {
+  if (inputRate === outputRate) return input;
+  const ratio = inputRate / outputRate;
+  const outLength = Math.max(1, Math.round(input.length / ratio));
+  const output = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const srcIdx = i * ratio;
+    const idx = Math.floor(srcIdx);
+    const frac = srcIdx - idx;
+    const a = input[idx] ?? 0;
+    const b = input[idx + 1] ?? a;
+    output[i] = a * (1 - frac) + b * frac;
+  }
+  return output;
+}
+
+function encodeWavPcm16(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function measureAudioLevel(samples) {
+  if (!samples.length) return { peak: 0, rms: 0 };
+  let sumSq = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.abs(samples[i]);
+    if (v > peak) peak = v;
+    sumSq += samples[i] * samples[i];
+  }
+  return { peak, rms: Math.sqrt(sumSq / samples.length) };
+}
+
+async function beginVoiceRecording() {
+  const status = document.getElementById("status");
+  const askBtn = document.getElementById("ask");
+  const voiceConsole = document.getElementById("voiceConsole");
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent = "❌ Микрофон недоступен в этом браузере";
     return;
   }
 
-  if (!recognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'ru-RU';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.continuous = false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: { ideal: TARGET_SAMPLE_RATE },
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: true,
+      },
+    });
 
-    recognition.onresult = (event) => {
-      const currentIndex = event.resultIndex;
-      const transcript = event.results[currentIndex][0].transcript.trim();
-      questionTranscript = transcript;
-      console.log("🗣️ Вопрос распознан:", transcript);
-      logVoicePhrase(transcript);
+    const audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const silentGain = audioContext.createGain();
+    silentGain.gain.value = 0;
+    const chunks = [];
+
+    processor.onaudioprocess = (event) => {
+      chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
     };
 
-    recognition.onerror = (event) => {
-      console.error("❌ Ошибка распознавания:", event.error);
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(audioContext.destination);
 
-      if (event.error === "no-speech" && isListeningQuestion) {
-        if (noSpeechRetries < MAX_NO_SPEECH_RETRIES) {
-          noSpeechRetries += 1;
-          status.textContent = `🎤 Не расслышал, повторите вопрос (${noSpeechRetries}/${MAX_NO_SPEECH_RETRIES + 1})...`;
-          setTimeout(() => {
-            if (!isListeningQuestion) return;
-            try {
-              recognition.start();
-            } catch (_) {
-              // если start в этот момент недоступен, onend завершит сессию
-            }
-          }, 250);
-          return;
+    voiceRecorder = {
+      stream,
+      audioContext,
+      processor,
+      source,
+      silentGain,
+      chunks,
+      sampleRate: audioContext.sampleRate,
+      startedAt: Date.now(),
+      async stop() {
+        processor.onaudioprocess = null;
+        source.disconnect();
+        processor.disconnect();
+        silentGain.disconnect();
+        stream.getTracks().forEach((t) => t.stop());
+        await audioContext.close();
+      },
+      buildWavBlob() {
+        let total = 0;
+        for (const c of chunks) total += c.length;
+        const merged = new Float32Array(total);
+        let pos = 0;
+        for (const c of chunks) {
+          merged.set(c, pos);
+          pos += c.length;
         }
-
-        status.textContent = "⚠️ Речь не распознана. Нажмите «Спросить» и говорите чуть громче.";
-        askBtn.disabled = false;
-        isListeningQuestion = false;
-        return;
-      }
-
-      status.textContent = `❌ Ошибка распознавания: ${event.error}`;
-      askBtn.disabled = false;
-      isListeningQuestion = false;
+        const resampled = resampleFloat32(merged, this.sampleRate, TARGET_SAMPLE_RATE);
+        return { blob: encodeWavPcm16(resampled, TARGET_SAMPLE_RATE), samples: resampled };
+      },
     };
 
-    recognition.onend = async () => {
-      if (!isListeningQuestion) return;
-      isListeningQuestion = false;
-      askBtn.disabled = false;
+    isRecordingQuestion = true;
+    askBtn.disabled = false;
+    askBtn.textContent = "⏹ Отправить";
+    voiceConsole.style.display = "block";
+    status.textContent = "🎤 Говорите… нажмите «Отправить», когда закончите";
+  } catch (e) {
+    status.textContent = `❌ Не удалось включить микрофон: ${e.message}`;
+  }
+}
 
-      if (!questionTranscript) {
-        status.textContent = "⚠️ Не удалось распознать вопрос";
-        return;
-      }
+async function stopVoiceQuestionAndUpload() {
+  const status = document.getElementById("status");
+  const generationStatus = document.getElementById("generationStatus");
+  const askBtn = document.getElementById("ask");
+  const player = document.getElementById("player");
+  const voiceConsole = document.getElementById("voiceConsole");
+  const scriptPanel = document.getElementById("scriptPanel");
+  const scriptTextEl = document.getElementById("scriptText");
 
-      const text = questionTranscript;
-      questionTranscript = "";
-      status.textContent = `❓ Вопрос: "${text}"`;
+  if (!voiceRecorder) return;
 
-      const questionPoi = {
-        id: `вопрос_${Date.now()}`,
-        prompt: `Ответь на вопрос пользователя кратко, по делу и с пошлым юмором: ${text}`
-      };
-      await fetchAndPlay(questionPoi, {
-        isQuestion: true,
-        loadingStatus: "🤔 Генерируется ответ...",
-        playingStatus: "🔊 Играет ответ на вопрос"
-      });
-    };
+  isRecordingQuestion = false;
+  askBtn.disabled = true;
+  askBtn.textContent = "🎤 Спросить";
+
+  const rec = voiceRecorder;
+  voiceRecorder = null;
+  await rec.stop();
+
+  const durationMs = Date.now() - rec.startedAt;
+  if (durationMs < 800) {
+    status.textContent = "⚠️ Запись слишком короткая — говорите дольше (1–2 сек)";
+    askBtn.disabled = false;
+    return;
   }
 
-  questionTranscript = "";
-  noSpeechRetries = 0;
-  isListeningQuestion = true;
-  askBtn.disabled = true;
-  voiceConsole.style.display = "block";
-  voiceConsole.innerHTML = "";
-  status.textContent = "🎤 Слушаю вопрос...";
+  const { blob: wavBlob, samples } = rec.buildWavBlob();
+  const { peak, rms } = measureAudioLevel(samples);
+  console.log(`🎙️ WAV: ${wavBlob.size} bytes, ${(samples.length / TARGET_SAMPLE_RATE).toFixed(1)}s, peak=${peak.toFixed(4)}, rms=${rms.toFixed(4)}`);
+
+  if (wavBlob.size < 1000 || samples.length < TARGET_SAMPLE_RATE * 0.5) {
+    status.textContent = "⚠️ Аудио не записалось — проверьте микрофон и повторите";
+    askBtn.disabled = false;
+    return;
+  }
+
+  if (peak < 0.008) {
+    status.textContent = "⚠️ Слишком тихо — говорите громче, ближе к микрофону";
+    askBtn.disabled = false;
+    return;
+  }
+
+  generationStatus.textContent = "🤔 Распознавание и ответ на сервере…";
+  status.textContent = "📤 Отправка аудио…";
+
+  const sessionId = `web_${Date.now()}`;
+  const form = new FormData();
+  form.append("file", wavBlob, "record.wav");
+  form.append("device_id", "browser");
+  form.append("session_id", sessionId);
 
   try {
-    recognition.start();
+    const res = await fetch(`${API_BASE}/api/v1/audio/upload`, {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+      throw new Error(detail || res.statusText);
+    }
+
+    const textIn = data.text_in || "";
+    const textOut = data.text_out || data.text || "";
+    if (textIn) {
+      logVoicePhrase(textIn);
+    } else if (textOut.includes("не расслышал")) {
+      logConsoleEntry("⚠️ STT пустой — попробуйте говорить громче и дольше (2–5 сек)");
+    }
+    if (textOut) logConsoleEntry(`💬 ${textOut}`);
+
+    if (scriptPanel && scriptTextEl) {
+      if (textOut.trim()) {
+        scriptTextEl.textContent = textOut;
+        scriptPanel.style.display = "block";
+      } else {
+        scriptTextEl.textContent = "";
+        scriptPanel.style.display = "none";
+      }
+    }
+
+    const audioPath = data.url || data.audio_url || data.relative_url;
+    if (!audioPath) throw new Error("В ответе нет url/audio_url");
+
+    const audioSrc = audioPath.startsWith("http") ? audioPath : `${API_BASE}${audioPath}`;
+    player.src = audioSrc;
+    player.style.display = "block";
+    generationStatus.textContent = "";
+    status.textContent = textIn ? `❓ «${textIn}»` : "🔊 Играет ответ";
+    await player.play();
+
+    player.onended = () => {
+      status.textContent = "📍 Ждём следующую точку…";
+    };
+    player.onerror = () => {
+      status.textContent = "⚠️ Ошибка воспроизведения ответа";
+    };
   } catch (e) {
+    console.error("voice upload error:", e);
+    const hint = window.location.protocol === "file:"
+      ? " Откройте страницу через http://127.0.0.1:8000 после запуска python server.py"
+      : "";
+    status.textContent = `❌ Ошибка: ${e.message}${hint}`;
+    generationStatus.textContent = "";
+  } finally {
     askBtn.disabled = false;
-    isListeningQuestion = false;
-    status.textContent = `❌ Не удалось запустить голосовой ввод: ${e.message}`;
+    voiceConsole.style.display = voiceConsole.children.length ? "block" : "none";
   }
 }
 
